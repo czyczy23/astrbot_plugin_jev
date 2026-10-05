@@ -1,9 +1,11 @@
 """
 System One 决策客户端 - SystemOneJudge
 
-Chat_PLUS Jev fork 新增模块：接入阿里云百炼 TokenPlan 的 decision-model-preview
-（TypeSafe System One 协议）做「是否加入话题主动发言」的极速决策，
-用于替代 / 复核 Chat_PLUS 原有的随机概率门。
+Chat_PLUS Jev fork 新增模块：接入 System One（Jev 式）极速决策模型做
+「是否加入话题主动发言」的判断，用于替代 / 复核 Chat_PLUS 原有的随机概率门。
+支持两类接口（协议同构，配置 systemone_provider 切换）：
+- aliyun    阿里云百炼 TokenPlan 官方接口（decision-model-preview）
+- openrouter OpenRouter System One 接口（typesafe/jev-1.13 等模型）
 
 设计要点：
 1. 极速：aiohttp 直连 HTTPS，默认 4 秒超时；失败 / 超时 / 解析异常一律返回「未决策」None，
@@ -43,10 +45,29 @@ except Exception:  # pragma: no cover
 
 # ========== 常量 ==========
 
-DEFAULT_BASE_URL = (
-    "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/systemone"
-)
-DEFAULT_MODEL = "decision-model-preview"
+# 接口提供商：systemone_provider 配置项的合法取值
+PROVIDER_ALIYUN = "aliyun"
+PROVIDER_OPENROUTER = "openrouter"
+
+# 各提供商的默认端点与模型（systemone_base_url / systemone_model 留空时使用）。
+# 两者的 System One 请求/响应协议同构（{"model","state","questions"} → {"answers":{...}}），
+# 切换提供商只需改 provider 并换对应 API Key。
+PROVIDER_DEFAULTS: Dict[str, Dict[str, str]] = {
+    PROVIDER_ALIYUN: {
+        "base_url": (
+            "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode"
+            "/v1/systemone"
+        ),
+        "model": "decision-model-preview",
+    },
+    PROVIDER_OPENROUTER: {
+        "base_url": "https://openrouter.ai/api/v1/systemone",
+        "model": "typesafe/jev-1.13",
+    },
+}
+
+DEFAULT_BASE_URL = PROVIDER_DEFAULTS[PROVIDER_ALIYUN]["base_url"]
+DEFAULT_MODEL = PROVIDER_DEFAULTS[PROVIDER_ALIYUN]["model"]
 DEFAULT_GROUP_CONFIG_REL = (
     "plugin_data/astrbot_plugin_group_chat_plus/systemone_group_config.json"
 )
@@ -171,6 +192,7 @@ class SystemOneJudge:
     _api_key: str = ""
     _base_url: str = DEFAULT_BASE_URL
     _model: str = DEFAULT_MODEL
+    _provider: str = PROVIDER_ALIYUN
     _timeout: float = 4.0
     _jev_mode: str = JEV_MODE_OFF
     _join_threshold: float = 0.6
@@ -220,10 +242,16 @@ class SystemOneJudge:
         cls._enable = bool(config.get("enable_systemone_decision", False))
         cls._api_key = str(config.get("systemone_api_key", "") or "").strip()
 
+        # 接口提供商（aliyun=官方 TokenPlan / openrouter=OpenRouter System One）
+        provider = str(config.get("systemone_provider", "") or "").strip().lower()
+        if provider not in PROVIDER_DEFAULTS:
+            provider = PROVIDER_ALIYUN
+        cls._provider = provider
+
         base_url = str(config.get("systemone_base_url", "") or "").strip()
-        cls._base_url = base_url or DEFAULT_BASE_URL
+        cls._base_url = base_url or PROVIDER_DEFAULTS[provider]["base_url"]
         model = str(config.get("systemone_model", "") or "").strip()
-        cls._model = model or DEFAULT_MODEL
+        cls._model = model or PROVIDER_DEFAULTS[provider]["model"]
 
         cls._timeout = _clamp_float(config.get("systemone_timeout", 4), 4.0, 0.5, 30.0)
         cls._jev_mode = normalize_jev_mode(config.get("jev_mode", JEV_MODE_OFF))
@@ -297,8 +325,8 @@ class SystemOneJudge:
             )
             return
         logger.info(
-            f"🧠 [SystemOne] 决策模块已启用：model={cls._model}, "
-            f"endpoint={cls._base_url}, "
+            f"🧠 [SystemOne] 决策模块已启用：provider={cls._provider}, "
+            f"model={cls._model}, endpoint={cls._base_url}, "
             f"jev_mode={cls._jev_mode}, 阈值={cls._join_threshold:.2f}, "
             f"每小时上限={cls._max_joins_per_hour}(0=不限), "
             f"最小间隔={cls._min_join_interval_sec}s, 超时={cls._timeout:.1f}s"
@@ -698,6 +726,12 @@ class SystemOneJudge:
             "Authorization": f"Bearer {cls._api_key}",
             "Content-Type": "application/json",
         }
+        if cls._provider == PROVIDER_OPENROUTER:
+            # OpenRouter 归属头（可选）：在 openrouter.ai 排行榜中标注调用来源
+            headers.setdefault(
+                "HTTP-Referer", "https://github.com/czyczy23/astrbot_plugin_jev"
+            )
+            headers.setdefault("X-Title", "astrbot_plugin_jev")
         timeout = float(cls._timeout)
         try:
             if cls._http_post_hook is not None:

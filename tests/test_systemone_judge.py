@@ -381,6 +381,86 @@ class TestFailureDegradation(JudgeTestCase):
         self.assertEqual(call["payload"]["model"], "decision-model-preview")
 
 
+# ========== 3.5 接口提供商（aliyun / openrouter） ==========
+
+
+class TestProviders(JudgeTestCase):
+    async def test_default_provider_is_aliyun(self):
+        self.configure(systemone_base_url="", systemone_model="")
+        self.assertEqual(SystemOneJudge._provider, "aliyun")
+        self.assertEqual(
+            SystemOneJudge._base_url,
+            systemone_judge.PROVIDER_DEFAULTS["aliyun"]["base_url"],
+        )
+        self.assertEqual(SystemOneJudge._model, "decision-model-preview")
+
+    async def test_openrouter_provider_defaults(self):
+        self.configure(
+            systemone_provider="openrouter",
+            systemone_base_url="",
+            systemone_model="",
+        )
+        self.assertEqual(SystemOneJudge._provider, "openrouter")
+        self.assertEqual(
+            SystemOneJudge._base_url, "https://openrouter.ai/api/v1/systemone"
+        )
+        self.assertEqual(SystemOneJudge._model, "typesafe/jev-1.13")
+
+    async def test_explicit_url_and_model_override_provider_defaults(self):
+        self.configure(
+            systemone_provider="openrouter",
+            systemone_base_url="https://my-proxy.example/v1/systemone",
+            systemone_model="typesafe/jev-router",
+        )
+        self.mock_http()
+        await SystemOneJudge.judge_join("30001", self.messages())
+        call = self.calls[0]
+        self.assertEqual(call["url"], "https://my-proxy.example/v1/systemone")
+        self.assertEqual(call["payload"]["model"], "typesafe/jev-router")
+
+    async def test_openrouter_sends_attribution_headers(self):
+        self.configure(
+            systemone_provider="openrouter",
+            systemone_base_url="",
+            systemone_model="",
+        )
+        self.mock_http()
+        await SystemOneJudge.judge_join("30002", self.messages())
+        headers = self.calls[0]["headers"]
+        self.assertIn("HTTP-Referer", headers)
+        self.assertIn("X-Title", headers)
+        self.assertEqual(headers["Authorization"], "Bearer sk-sp-unit-test-key")
+
+    async def test_aliyun_omits_attribution_headers(self):
+        self.configure(systemone_provider="aliyun")
+        self.mock_http()
+        await SystemOneJudge.judge_join("30003", self.messages())
+        headers = self.calls[0]["headers"]
+        self.assertNotIn("HTTP-Referer", headers)
+        self.assertNotIn("X-Title", headers)
+
+    async def test_invalid_provider_falls_back_to_aliyun(self):
+        self.configure(
+            systemone_provider="garbage",
+            systemone_base_url="",
+            systemone_model="",
+        )
+        self.assertEqual(SystemOneJudge._provider, "aliyun")
+        self.assertEqual(
+            SystemOneJudge._base_url,
+            systemone_judge.PROVIDER_DEFAULTS["aliyun"]["base_url"],
+        )
+
+    async def test_provider_value_is_case_insensitive(self):
+        self.configure(
+            systemone_provider="OpenRouter",
+            systemone_base_url="",
+            systemone_model="",
+        )
+        self.assertEqual(SystemOneJudge._provider, "openrouter")
+        self.assertEqual(SystemOneJudge._model, "typesafe/jev-1.13")
+
+
 # ========== 4. 限频 / 冷却保护 ==========
 
 

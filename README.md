@@ -32,6 +32,7 @@
 |---|---|
 | 三种介入模式 | `off`（默认，行为与原版逐字节一致）/ `hybrid`（概率门通过后复核，推荐）/ `replace`（替代概率门） |
 | 决策内容 | join 概率（noul）、话题相关度（score）、建议插话方式（choice） |
+| 双接口提供商 | `systemone_provider` 一键切换：阿里云百炼官方接口 / OpenRouter System One 接口（`typesafe/jev-1.13`），协议同构 |
 | 每群独立限频 | 每小时上限、两次插话最小间隔、Bot 冷却、短消息跳过——全部按群计数，插话与主动开场分桶 |
 | 全链路降级 | 超时 / 网络错误 / 坏响应 / 任何异常都返回「未决策」，回落原版行为 |
 | 每群覆盖配置 | JSON 文件按群覆盖阈值/模式/开关，约 30 秒热生效，无需重启 |
@@ -49,21 +50,20 @@ AstrBot 插件市场添加仓库地址 `https://github.com/czyczy23/astrbot_plug
 
 ### 前置条件
 
-- 阿里云百炼（DashScope）账号，开通 **TokenPlan 决策模型** 服务
-- 一个 `sk-` 开头的 API Key（[百炼控制台](https://bailian.console.aliyun.com/) 创建）
+- **接口二选一**：阿里云百炼（DashScope，需开通 TokenPlan 决策模型，[百炼控制台](https://bailian.console.aliyun.com/) 创建 `sk-` Key）或 [OpenRouter](https://openrouter.ai/)（创建 `sk-or-v1-` Key，用 `typesafe/jev-1.13` 模型）
 
 ### 三步启用
 
 | 步骤 | 配置项 | 填什么 |
 |---|---|---|
 | 1️⃣ | `enable_systemone_decision` | `true`（总开关） |
-| 2️⃣ | `systemone_api_key` | 你的 `sk-` Key（仅存于本插件配置，不进任何代码仓库） |
+| 2️⃣ | `systemone_api_key` | 对应平台的 Key：阿里云 `sk-…` / OpenRouter `sk-or-v1-…`（仅存于本插件配置，不进任何代码仓库） |
 | 3️⃣ | `jev_mode` | `hybrid`（推荐：保留你调好的概率节奏，决策模型负责把关质量） |
 
 重启插件后看日志确认：
 
 ```
-🧠 [SystemOne] 决策模块已启用：model=decision-model-preview, endpoint=https://token-plan..., jev_mode=hybrid, 阈值=0.60, ...
+🧠 [SystemOne] 决策模块已启用：provider=aliyun, model=decision-model-preview, endpoint=https://token-plan..., jev_mode=hybrid, 阈值=0.60, ...
 ```
 
 之后群里出现插话决策时（`jev_log_enabled` 默认开）：
@@ -72,30 +72,48 @@ AstrBot 插件市场添加仓库地址 `https://github.com/czyczy23/astrbot_plug
 🧠 [SystemOne] 群123456789 插话判断: 通过 join=0.66 (阈值0.60) | 相关度=2.00 方式=react | 延迟=56ms
 ```
 
-## ⚙️ System One 接口与模型（可自定义）
+## ⚙️ System One 接口与模型（双提供商，可自定义）
 
-**接入端点和模型名都是配置项，不需要改任何代码。** 留空即用默认值：
+**Jev 决策模型有两个官方入口，插件都支持**——`systemone_provider` 一键切换，请求/响应协议完全同构（`{"model","state","questions"}` → `{"answers":{...}}`），切换只需换 provider 并填对应平台的 Key：
 
-| 配置项 | 默认值 | 说明 |
+| | `aliyun`（默认） | `openrouter` |
 |---|---|---|
-| `systemone_base_url` | `https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/systemone` | System One 协议端点。可指向自建网关/代理（内网转发、中转鉴权等），要求转发原始请求/响应体 |
-| `systemone_model` | `decision-model-preview` | 决策模型名。可换成百炼 TokenPlan 上任何 System One 协议兼容的决策模型 |
-| `systemone_api_key` | （空） | `sk-` Key，随 `Authorization: Bearer` 头发出 |
-| `systemone_timeout` | `4.0` | 单次请求超时（秒），实测端到端约 250ms，一般无需调大 |
+| 端点（留空自动填） | `https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/systemone` | `https://openrouter.ai/api/v1/systemone` |
+| 默认模型 | `decision-model-preview` | `typesafe/jev-1.13`（可换 `typesafe/jev-router` 自动路由） |
+| API Key | 阿里云百炼 `sk-…` | OpenRouter `sk-or-v1-…` |
+| 实测延迟 | 端到端约 250ms（服务端 50~70ms） | 经 OpenRouter 路由分发，建议超时调到 6~8s |
+
+**切到 OpenRouter 只需两步**：
 
 ```jsonc
-// 插件配置中自定义网关 + 新模型的示例
 {
+  "systemone_provider": "openrouter",
+  "systemone_api_key": "sk-or-v1-你的Key"
+}
+```
+
+其余高级配置（全部可选，留空用所选 provider 的默认值）：
+
+| 配置项 | 说明 |
+|---|---|
+| `systemone_base_url` | 覆盖端点。可指向自建网关/代理（内网转发、中转鉴权等），要求转发原始请求/响应体 |
+| `systemone_model` | 覆盖模型名。可换成对应平台上任何 System One 协议兼容的决策模型 |
+| `systemone_timeout` | 单次请求超时（秒）。默认 4.0，OpenRouter 建议 6~8 |
+
+```jsonc
+// 例子：OpenRouter + 自动路由模型 + 自定义网关
+{
+  "systemone_provider": "openrouter",
+  "systemone_model": "typesafe/jev-router",
   "systemone_base_url": "https://my-gateway.internal/v1/systemone",
-  "systemone_model": "decision-model-v2",
-  "systemone_timeout": 3.0
+  "systemone_timeout": 8.0
 }
 ```
 
 **两处注意**：
 
-1. System One 是专用协议（`POST` 一组 `state` + `questions`，返回概率/评分），**不是** OpenAI `chat/completions`——普通聊天模型地址填进去只会得到解析失败然后降级，不会崩。
-2. 改完后重启插件，启动日志会打印当前生效的 `model` 与 `endpoint`，看一眼就知道配置有没有吃进去。
+1. System One 是专用决策协议（`POST` 一组 `state` + `questions`，返回概率/评分），**不是** OpenAI `chat/completions`——普通聊天模型地址填进去只会得到解析失败然后降级，不会崩。
+2. 改完后重启插件，启动日志会打印当前生效的 `provider / model / endpoint`，看一眼就知道配置有没有吃进去。
 
 ## 🛡️ 决策行为与限频
 
@@ -140,7 +158,7 @@ AstrBot 插件市场添加仓库地址 `https://github.com/czyczy23/astrbot_plug
 
 ## 🖥️ WebUI 与可视化
 
-- **配置面板**（默认 `http://<host>:1451`）：科技树式消息流程图，System One 节点（🧠）位于「概率判定系统」阶段，点开即改 21 项配置，保存走 schema 校验，重启插件生效
+- **配置面板**（默认 `http://<host>:1451`）：科技树式消息流程图，System One 节点（🧠）位于「概率判定系统」阶段，点开即改 22 项配置，保存走 schema 校验，重启插件生效
 - **决策流程模拟器**：https://jev-decision-flow.pages.dev —— 群聊剧本回放 + 决策链逐节点追踪，可对比三模式/阈值/故障降级行为
 
 ## 🧪 开发与测试

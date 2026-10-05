@@ -2214,7 +2214,7 @@
     "_systemone_section_header": {
         "description": "═══════════════ 🧠 System One 决策（Jev 式插话判断）═══════════════",
         "type": "string",
-        "hint": "Jev fork 新增：接入阿里云百炼 decision-model-preview（TypeSafe System One 协议），用极速决策模型判断「是否加入话题主动发言」，替代或复核原有的随机概率门。默认全部关闭：enable_systemone_decision=false 且 jev_mode=off 时，插件行为与旧版完全一致。接口与模型均可自定义（systemone_base_url / systemone_model）。设计文档：仓库 docs/JEV_DESIGN.md",
+        "hint": "Jev fork 新增：接入 System One（Jev 式）极速决策模型，判断「是否加入话题主动发言」，替代或复核原有的随机概率门。支持阿里云百炼官方接口与 OpenRouter 接口（systemone_provider 切换）。默认全部关闭：enable_systemone_decision=false 且 jev_mode=off 时，插件行为与旧版完全一致。接口与模型均可自定义。设计文档：仓库 docs/JEV_DESIGN.md",
         "default": "--- System One 决策区 ---"
     },
     "enable_systemone_decision": {
@@ -2223,28 +2223,38 @@
         "hint": "【总开关】开启后，插件在「普通消息插话」与「沉默主动开话题」两处接入 System One 决策模型。关闭后完全跳过决策链，行为与旧版一致（默认关闭）。注意：还需填写 API Key 且 jev_mode 不为 off 才会真正生效；API Key 留空时模块自我禁用并在日志中提示",
         "default": false
     },
+    "systemone_provider": {
+        "description": "🧠 System One 接口提供商",
+        "type": "string",
+        "options": [
+            "aliyun",
+            "openrouter"
+        ],
+        "hint": "aliyun=阿里云百炼 TokenPlan 官方接口（默认，模型 decision-model-preview，Key 为 sk- 开头）；openrouter=OpenRouter 的 System One 接口（默认模型 typesafe/jev-1.13，也可填 typesafe/jev-router 按请求自动路由，Key 为 sk-or-v1- 开头）。两者请求/响应协议完全同构，切换只需换 provider 并填对应 API Key；systemone_base_url / systemone_model 留空时自动使用所选 provider 的默认值",
+        "default": "aliyun"
+    },
     "systemone_api_key": {
         "description": "🧠 System One API Key",
         "type": "string",
-        "hint": "阿里云百炼 TokenPlan 的 API Key（sk- 开头），仅保存在本插件配置中，不要提交到任何代码仓库。留空时 System One 决策模块自我禁用并输出日志提示，插件自动降级为旧概率逻辑",
+        "hint": "随 systemone_provider 填对应平台的 Key：aliyun=阿里云百炼 TokenPlan Key（sk- 开头）；openrouter=OpenRouter Key（sk-or-v1- 开头）。仅保存在本插件配置中，不要提交到任何代码仓库。留空时 System One 决策模块自我禁用并输出日志提示，插件自动降级为旧概率逻辑",
         "default": ""
     },
     "systemone_base_url": {
         "description": "🧠 System One 接入端点（可自定义）",
         "type": "string",
-        "hint": "决策模型接口地址。留空使用默认值 https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/systemone。可指向自建网关/代理（如内网转发、中转鉴权），需兼容 System One 请求/响应协议。注意：该端点不是 OpenAI chat/completions，普通聊天模型不能直接填在这里。启动日志会打印当前生效的 model 与 endpoint，便于确认配置已生效",
+        "hint": "决策模型接口地址。留空时按 provider 取默认值：aliyun=https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/systemone；openrouter=https://openrouter.ai/api/v1/systemone。可指向自建网关/代理（如内网转发、中转鉴权），需兼容 System One 请求/响应协议。注意：该端点不是 OpenAI chat/completions，普通聊天模型不能直接填在这里。启动日志会打印当前生效的 provider / model / endpoint，便于确认配置已生效",
         "default": ""
     },
     "systemone_model": {
         "description": "🧠 System One 模型名（可自定义）",
         "type": "string",
-        "hint": "决策模型名称，留空使用默认值 decision-model-preview。可替换为阿里云百炼 TokenPlan 上任何 System One 协议兼容的决策模型，更换后重启插件即生效，启动日志会打印当前生效的 model 与 endpoint",
+        "hint": "决策模型名称。留空时按 provider 取默认值：aliyun=decision-model-preview；openrouter=typesafe/jev-1.13（也可填 typesafe/jev-router 自动路由）。可替换为对应平台上任何 System One 协议兼容的决策模型，更换后重启插件即生效，启动日志会打印当前生效的 model 与 endpoint",
         "default": ""
     },
     "systemone_timeout": {
         "description": "🧠 决策请求超时(秒)",
         "type": "float",
-        "hint": "单次决策请求的超时时间，默认 4 秒（实测端到端 250ms 左右，无需调大）。超时即视为「未决策」，自动降级到旧概率逻辑，不会让机器人哑掉。允许范围 0.5~30 秒",
+        "hint": "单次决策请求的超时时间，默认 4 秒（阿里云官方接口实测端到端 250ms 左右，无需调大；OpenRouter 接口经路由分发开销略高，建议 6~8 秒）。超时即视为「未决策」，自动降级到旧概率逻辑，不会让机器人哑掉。允许范围 0.5~30 秒",
         "default": 4.0
     },
     "jev_mode": {

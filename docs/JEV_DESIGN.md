@@ -138,7 +138,7 @@
 
 ---
 
-## 4. 配置清单（共 21 键，抄自 `_conf_schema.json` 2214–2344 行）
+## 4. 配置清单（共 22 键，抄自 `_conf_schema.json`「System One 决策」区）
 
 | # | 键名 | 类型 | 默认值 | 含义 |
 |---|---|---|---|---|
@@ -219,6 +219,22 @@
 - 生效延迟：修改文件后约 30 秒内生效，无需重启插件。
 
 ---
+
+## 5.5 接口提供商（aliyun / openrouter）
+
+V1.3.0.jev.2 起支持两类 Jev 决策模型入口，`systemone_provider` 切换：
+
+| | aliyun（默认） | openrouter |
+|---|---|---|
+| 端点 | `https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/systemone` | `https://openrouter.ai/api/v1/systemone` |
+| 默认模型 | `decision-model-preview` | `typesafe/jev-1.13`（或 `typesafe/jev-router` 自动路由） |
+| Key | 百炼 `sk-…` | OpenRouter `sk-or-v1-…` |
+
+- 两者的 System One 请求/响应协议同构（`{"model","state","questions"}` → `{"answers":{...}}`，noul/score/choice 三原语），`_parse_response` 与降级链路零改动复用
+- `systemone_base_url` / `systemone_model` 留空 → 取所选 provider 默认值；显式填写仍优先生效（自建网关/代理不受影响）
+- provider=openrouter 时 `_post_json` 附带 `HTTP-Referer` / `X-Title` 归属头（OpenRouter 排行榜应用标注）
+- 超时建议：OpenRouter 经路由分发开销略高，建议 `systemone_timeout` 6~8 秒
+- 配置清单由 21 键增至 22 键（新增 `systemone_provider`）
 
 ## 6. 降级矩阵
 

@@ -1,5 +1,20 @@
 ## 📝 更新日志
 
+### V1.3.0.jev.2 (2026-10-06)
+
+**Jev 决策模型双接口支持：新增 OpenRouter 入口（typesafe/jev-1.13），与阿里云官方接口协议同构、一键切换**
+
+- **新增 `systemone_provider` 配置项**（aliyun / openrouter，默认 aliyun）：
+  - aliyun = 阿里云百炼 TokenPlan 官方接口（端点 https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/systemone，模型 decision-model-preview）
+  - openrouter = OpenRouter System One 接口（端点 https://openrouter.ai/api/v1/systemone，默认模型 typesafe/jev-1.13，可换 typesafe/jev-router 自动路由）
+  - 两者请求/响应协议完全同构（{"model","state","questions"} → {"answers":{...}}，noul/score/choice 三原语），现有解析与降级链路零改动直接复用
+- **provider 感知的默认值**：systemone_base_url / systemone_model 留空时按所选 provider 取默认值；显式填写仍然优先生效（自建网关/代理/换模型不受影响）
+- **OpenRouter 归属头**：provider=openrouter 时自动附带 HTTP-Referer / X-Title 头（OpenRouter 排行榜应用标注，可识别来源）
+- **启动日志升级**：打印 provider / model / endpoint 三元组，便于确认配置生效
+- **超时建议**：OpenRouter 经路由分发开销略高，schema 提示建议 6~8 秒（默认 4.0 不变）
+- **WebUI**：流程图「🧠 System One 决策」节点新增 systemone_provider 键（20 项可视化配置），描述同步双接口说明
+- **测试**：新增 7 个 provider 用例（默认值回落/显式覆盖/归属头发送与省略/非法值回退/大小写不敏感），共 74 个全绿
+
 ### V1.3.0.jev.1 (2026-10-05)
 
 **Jev Fork 首个版本（基于原作 V1.2.3.hotfix.2）：集成阿里云百炼 System One 决策模型，插话判断从纯随机升级为「概率门 + 决策模型复核」双层架构**
