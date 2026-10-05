@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+*.bak
+.DS_Store
+plugin_data/
+*.log
