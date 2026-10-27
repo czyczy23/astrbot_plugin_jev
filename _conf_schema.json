@@ -2004,6 +2004,48 @@
         "hint": "【需启用时效性判断】消息发送后多长时间内会被用于重复检测。超过此时间的消息不参与重复判断。默认1800秒(30分钟)。建议300-7200秒。例如设置600秒，则10分钟前发送的消息不会被用于重复检测",
         "default": 1800
     },
+    "_global_duplicate_guard_section_header": {
+        "description": "═══════════════ 🛡️ 全局重复回复拦截（跨插件） ═══════════════",
+        "type": "string",
+        "hint": "上面的「AI重复消息拦截」只覆盖本插件自己产生的回复；当群里有其他插件（如 angel_heart）也在生成回复时，它们不受保护，模型可能被自己上一句话「锚定」而反复发送同一句，造成刷屏复读。这里的拦截在发送前对所有来源的回复做最后一道去重",
+        "default": "--- 全局重复回复拦截配置区 ---"
+    },
+    "enable_global_duplicate_guard": {
+        "description": "🛡️ 启用全局重复回复拦截（跨插件）",
+        "type": "bool",
+        "hint": "【总开关】开启后，任何插件生成的回复在发送前都会与该会话最近发送过的内容比对，完全相同则跳过发送。仅做完全一致匹配（忽略空白差异），不会误伤正常的不同内容回复",
+        "default": true
+    },
+    "global_duplicate_window_sec": {
+        "description": "⏱️ 全局拦截时效(秒)",
+        "type": "int",
+        "hint": "在该时间窗口内发送过的回复参与重复判定。默认900秒(15分钟)，可设60-7200秒。窗口越短越宽松",
+        "default": 900
+    },
+    "global_duplicate_check_count": {
+        "description": "🔢 全局拦截参考条数",
+        "type": "int",
+        "hint": "与最近多少条已发送回复比对。默认5条，建议1-10条",
+        "default": 5
+    },
+    "global_duplicate_min_length": {
+        "description": "📏 全局拦截最小长度(字符)",
+        "type": "int",
+        "hint": "短于此长度的回复不参与拦截（避免把「嗯」「哈哈」这类本来就该重复的短回复拦掉）。默认6",
+        "default": 6
+    },
+    "global_duplicate_similarity": {
+        "description": "🎯 近似重复阈值",
+        "type": "float",
+        "hint": "0 表示只拦完全一致的复读；0.92 表示长句差一两个字/标点也拦（模型被自己上一句锚定时常出现这种情况）。建议 0.88-0.95，设为 0 可关闭近似匹配",
+        "default": 0.92
+    },
+    "global_duplicate_similarity_min_length": {
+        "description": "📐 近似匹配最小长度(字符)",
+        "type": "int",
+        "hint": "只有长于等于此长度的回复才做相似度比对（短句相似度噪声大）。默认12",
+        "default": 12
+    },
     "enable_private_chat": {
         "description": "🔘 启用私信功能",
         "type": "bool",

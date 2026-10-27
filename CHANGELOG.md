@@ -1,5 +1,17 @@
 ## 📝 更新日志
 
+### V1.3.0.jev.3 (2026-10-27)
+
+**修复群内「刷屏复读」：新增跨插件全局重复回复拦截（发送前最后一道防线）**
+
+- **问题**：插件自带的「AI重复消息拦截」只覆盖本插件自己产生的回复（`on_decorating_result` 里以 `processing_sessions` 为门），当同群还有别的插件（如 astrbot_plugin_angel_heart）也在生成回复时不受保护。模型一旦被自己上一句「锚定」（典型的机器人互相引用 + 追问场景），就会出现同一句话被连续发送 6~8 遍的刷屏复读
+- **新增全局拦截**：在 `on_decorating_result` 中把去重判定提前到「是否本插件处理」判断之前 —— 任何插件产生的 LLM 结果在发送前都会与该会话最近发送过的内容比对，命中即 `event.clear_result()` 跳过发送；未跟踪的消息只过这道防线，不进入本插件后续流程（不污染 raw_reply_cache 等）
+- **精确 + 近似双层匹配**：完全相同直接拦；长句（默认 ≥12 字）再用 `difflib` 相似度兜底（阈值 0.92），避免模型重生成时「只差标点/一两个字」就逃逸
+- **短句豁免**：默认短于 6 字的回复（「嗯」「哈哈」）不参与拦截，避免误伤本来就该重复的口语应答
+- **配置项（WebUI 可调，schema 已新增）**：`enable_global_duplicate_guard`(默认开) / `global_duplicate_window_sec`(900) / `global_duplicate_check_count`(5) / `global_duplicate_min_length`(6) / `global_duplicate_similarity`(0.92，设 0 关闭近似) / `global_duplicate_similarity_min_length`(12)
+- **安全性**：按 `chat_id` 分桶、硬上限截断、会话数 >500 自动清理最久未用；全部 try/except 包裹，异常绝不影响发送主流程；开关关闭后行为与旧版完全一致
+- **实测依据**：7 次连续同文发送（15:12~15:16，群 1035326070，触发源为另一个 bot 反复引用本 bot 上一条回复）在部署后由拦截器覆盖；13 项场景用例（精确/近似/短句/跨会话/开关/超窗/跨插件）全部通过
+
 ### V1.3.0.jev.2 (2026-10-06)
 
 **Jev 决策模型双接口支持：新增 OpenRouter 入口（typesafe/jev-1.13），与阿里云官方接口协议同构、一键切换**

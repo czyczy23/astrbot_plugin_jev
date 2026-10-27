@@ -2416,6 +2416,39 @@ class ChatPlus(Star):
             max(60, _raw_time_limit), self._DUPLICATE_TIME_LIMIT_MAX
         )  # 重复检测时效(秒)（60-7200）
 
+        # === 全局重复回复拦截（跨插件）===
+        # 🔧 背景：上面的 AI 重复消息拦截只覆盖「本插件自己产生的回复」。
+        # 当群里还有其他插件（如 astrbot_plugin_angel_heart）在同一群生成回复时，
+        # 它们不受本插件去重保护，一旦模型被上一条自己的回复「锚定」，
+        # 就会出现同一句话被反复发送的刷屏复读。这里的钩子在装饰阶段
+        # 拦截「任何来源」的重复 LLM 结果，作为最后一道防线。
+        self.enable_global_duplicate_guard = config.get(
+            "enable_global_duplicate_guard", True
+        )  # 启用全局重复回复拦截（跨插件）
+        _raw_guard_window = config.get("global_duplicate_window_sec", 900)
+        self.global_duplicate_window_sec = min(
+            max(60, _raw_guard_window), self._DUPLICATE_TIME_LIMIT_MAX
+        )  # 拦截时效(秒)（60-7200）
+        _raw_guard_count = config.get("global_duplicate_check_count", 5)
+        self.global_duplicate_check_count = min(
+            max(1, _raw_guard_count), self._DUPLICATE_CHECK_COUNT_LIMIT
+        )  # 参考最近N条（1-50）
+        _raw_guard_min_len = config.get("global_duplicate_min_length", 6)
+        self.global_duplicate_min_length = min(max(1, _raw_guard_min_len), 200)
+        # 别忘了短回复（如「嗯」「哈哈」）本来就该重复，设置最小长度豁免
+        # 近似重复阈值：0=只拦完全一致；0.92=长句差一两个字也算复读
+        # （模型被自己上一句「锚定」时，重生成的内容常常只差标点或一两个字）
+        _raw_sim = config.get("global_duplicate_similarity", 0.92)
+        try:
+            _raw_sim = float(_raw_sim)
+        except (TypeError, ValueError):
+            _raw_sim = 0.92
+        self.global_duplicate_similarity = min(max(0.0, _raw_sim), 1.0)
+        _raw_sim_min_len = config.get("global_duplicate_similarity_min_length", 12)
+        self.global_duplicate_similarity_min_length = min(
+            max(2, _raw_sim_min_len), 500
+        )
+
         # === 私信功能开关 ===
         self.enable_private_chat = config.get(
             "enable_private_chat", False
@@ -2532,6 +2565,22 @@ class ChatPlus(Star):
         # 注意：StarTools.get_data_dir() 会自动检测插件名称
         data_dir = StarTools.get_data_dir()
         self.plugin_data_dir = str(data_dir)
+
+        # 🆕 每群初始读空气概率覆盖（独立文件，规避 AstrBot 配置校验丢弃未声明键）
+        # 文件：plugin_data/<插件名>/group_probability_overrides.json，形如 {"798085104": 0.8}
+        try:
+            _gp_path = Path(self.plugin_data_dir) / "group_probability_overrides.json"
+            if _gp_path.exists():
+                _gp_raw = json.loads(_gp_path.read_text(encoding="utf-8-sig"))
+                if isinstance(_gp_raw, dict) and _gp_raw:
+                    _merged = dict(getattr(self, "group_probability_overrides", {}) or {})
+                    _merged.update(
+                        {str(k): float(v) for k, v in _gp_raw.items() if v is not None}
+                    )
+                    self.group_probability_overrides = _merged
+                    logger.info(f"每群读空气概率覆盖已加载: {self.group_probability_overrides}")
+        except Exception as e:
+            logger.warning(f"每群读空气概率覆盖文件加载失败（忽略，使用全局默认）: {e}")
         ContextManager.init(
             self.plugin_data_dir,
             custom_storage_max_messages=self.custom_storage_max_messages,
@@ -2730,6 +2779,12 @@ class ChatPlus(Star):
         # 最多保留最近5条回复，超过30分钟的自动清理
         self.recent_replies_cache = {}
         self.raw_reply_cache = {}
+
+        # 🆕 全局重复回复拦截缓存（跨插件，所有插件的 LLM 回复都会登记）
+        # 格式: {chat_id: [(timestamp, normalized_text), ...]}
+        self._global_reply_guard: dict[str, list[tuple]] = {}
+        # 全局拦截统计（便于日志/排查）
+        self._global_duplicate_blocked_count = 0
 
         # 🔧 多轮工具调用支持：累积AI回复文本
         # 当AI先说话再调用工具再说话时，需要累积所有回复文本，
@@ -11261,6 +11316,113 @@ class ChatPlus(Star):
         except Exception as e:
             logger.error(f"[on_llm_response] 处理失败: {e}", exc_info=True)
 
+    # ============================================================
+    # 🆕 全局重复回复拦截（跨插件）
+    # 目的：本插件原有的去重只覆盖自己产生的回复；当群里其他插件（如
+    # astrbot_plugin_angel_heart）在同一群生成回复时不受保护，模型一旦被
+    # 自己上一句「锚定」，就会出现同一句话被反复发送的刷屏复读。
+    # 这两个方法在装饰阶段对所有来源的 LLM 结果做最后一道去重防线。
+    # ============================================================
+    @staticmethod
+    def _normalize_guard_text(text: str) -> str:
+        """归一化文本（压缩空白差异），用于全局重复判定"""
+        return " ".join(str(text or "").split())
+
+    def _global_duplicate_guard_record(self, chat_id: str, reply_text: str) -> None:
+        """把一条「即将发送」的回复登记进全局去重缓存"""
+        if not self.enable_global_duplicate_guard:
+            return
+        try:
+            norm = self._normalize_guard_text(reply_text)
+            if not norm or len(norm) < self.global_duplicate_min_length:
+                return
+            now_ts = time.time()
+            window = self.global_duplicate_window_sec
+            records = [
+                (ts, txt)
+                for ts, txt in self._global_reply_guard.get(chat_id, [])
+                if now_ts - ts < window
+            ]
+            records.append((now_ts, norm))
+            max_size = min(
+                max(10, self.global_duplicate_check_count * 2),
+                self._DUPLICATE_CACHE_SIZE_LIMIT,
+            )
+            self._global_reply_guard[chat_id] = records[-max_size:]
+            # 🔒 防内存泄漏：会话数过多时清理最久未更新的会话
+            if len(self._global_reply_guard) > 500:
+                stale = sorted(
+                    self._global_reply_guard.items(),
+                    key=lambda kv: kv[1][-1][0] if kv[1] else 0,
+                )[: len(self._global_reply_guard) - 400]
+                for _cid, _ in stale:
+                    self._global_reply_guard.pop(_cid, None)
+        except Exception:
+            pass  # 缓存异常绝不影响发送主流程
+
+    def _global_duplicate_guard_should_block(
+        self, chat_id: str, reply_text: str
+    ) -> bool:
+        """判定该回复是否与该会话最近发送过的回复重复。
+
+        返回 True 表示应拦截（调用方负责 event.clear_result()）。
+        未命中时会把本条回复登记进缓存（先登记再发送，防并发穿透）。
+        """
+        if not self.enable_global_duplicate_guard:
+            return False
+        try:
+            norm = self._normalize_guard_text(reply_text)
+            if not norm or len(norm) < self.global_duplicate_min_length:
+                return False
+            now_ts = time.time()
+            window = self.global_duplicate_window_sec
+            records = [
+                (ts, txt)
+                for ts, txt in self._global_reply_guard.get(chat_id, [])
+                if now_ts - ts < window
+            ]
+            for _ts, txt in records[-self.global_duplicate_check_count :]:
+                if txt == norm:
+                    self._global_duplicate_blocked_count += 1
+                    logger.warning(
+                        f"🚫 [全局重复拦截] 检测到与最近回复重复，已跳过发送"
+                        f"（chat_id={chat_id}，累计拦截 {self._global_duplicate_blocked_count} 次）"
+                        f"\n  重复内容: {norm[:80]}"
+                    )
+                    self._global_reply_guard[chat_id] = records
+                    return True
+                # 近似重复：模型重新生成时常只改标点/一两个字，
+                # 长句用相似度兜住，避免「差一个字符」就逃逸成刷屏
+                if (
+                    self.global_duplicate_similarity > 0
+                    and len(norm) >= self.global_duplicate_similarity_min_length
+                    and abs(len(txt) - len(norm))
+                    <= max(4, int(0.2 * len(norm)))
+                ):
+                    from difflib import SequenceMatcher
+
+                    ratio = SequenceMatcher(None, txt, norm).ratio()
+                    if ratio >= self.global_duplicate_similarity:
+                        self._global_duplicate_blocked_count += 1
+                        logger.warning(
+                            f"🚫 [全局重复拦截] 检测到近似重复，已跳过发送"
+                            f"（chat_id={chat_id}，相似度 {ratio:.2f}，"
+                            f"累计拦截 {self._global_duplicate_blocked_count} 次）"
+                            f"\n  历史: {txt[:80]}\n  本次: {norm[:80]}"
+                        )
+                        self._global_reply_guard[chat_id] = records
+                        return True
+            # 未命中：登记本条（后续相同的回复会被拦）
+            records.append((now_ts, norm))
+            max_size = min(
+                max(10, self.global_duplicate_check_count * 2),
+                self._DUPLICATE_CACHE_SIZE_LIMIT,
+            )
+            self._global_reply_guard[chat_id] = records[-max_size:]
+            return False
+        except Exception:
+            return False
+
     @filter.on_decorating_result()
     async def on_decorating_result(self, event: AstrMessageEvent):
         """
@@ -11280,9 +11442,10 @@ class ChatPlus(Star):
             message_id = self._get_processing_id(event)
 
             # 仅处理由本插件触发的消息
+            # 🔧 注意：不再直接 return —— 未跟踪的消息仍需经过「全局重复回复拦截」
+            # （其他插件产生的复读刷屏也要拦住），只是跳过本插件专属的后续流程。
             async with self.concurrent_lock:
-                if message_id not in self.processing_sessions:
-                    return
+                _tracked_by_plugin = message_id in self.processing_sessions
 
             result = event.get_result()
             if not result or not hasattr(result, "chain") or not result.chain:
@@ -11299,6 +11462,17 @@ class ChatPlus(Star):
             ).strip()
             if not reply_text:
                 return
+
+            # === 全局重复回复拦截（跨插件）===
+            # 本插件自己产生的回复继续走下面的专属去重流程（保持拦截标记、消息保存等一致性）；
+            # 其他插件产生的回复只过这道全局防线：命中则清空结果不发送，未命中则登记后直接结束，
+            # 不参与本插件后续流程（避免污染 raw_reply_cache / _pending_bot_replies）。
+            if not _tracked_by_plugin:
+                if self._global_duplicate_guard_should_block(chat_id, reply_text):
+                    event.clear_result()
+                    return
+                return
+
 
             self.raw_reply_cache[message_id] = reply_text
 
@@ -11428,6 +11602,10 @@ class ChatPlus(Star):
                         ][-max_cache_size:]
                 except Exception:
                     pass  # 缓存写入失败不影响主流程
+
+            # 本插件自己的回复同样登记进全局拦截缓存，
+            # 这样「本插件先说一句 → 别的插件复读同一句」也能被拦住
+            self._global_duplicate_guard_record(chat_id, reply_text)
 
             # 🆕 v1.0.2: 应用错字模拟（在重复检测之后，对原始内容进行装饰性修改）
             if self.typo_enabled and self.typo_generator:
