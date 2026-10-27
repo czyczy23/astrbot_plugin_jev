@@ -534,7 +534,7 @@ const FlowData = {
                     id: 'ai-decide',
                     name: 'AI读空气决策',
                     icon: '💭',
-                    desc: '调用决策AI分析对话上下文，判断是否适合回复。支持可选的额外推理模式，并可按配置输出处理后的推理块或原始模型文本到日志；支持单独关闭人格注入或指定判断专用人格名。关键词命中只代表进入判断流程或获得提示，不代表必须回复。当前消息发送者仍然是读空气判断的主要对象',
+                    desc: '调用决策AI分析对话上下文，判断是否适合回复。支持可选的额外推理模式，并可按配置输出处理后的推理块或原始模型文本到日志；可用「启用读空气AI判断」总开关整体停用本节点（关闭后概率门通过即直接回复）；支持单独关闭人格注入或指定判断专用人格名。关键词命中只代表进入判断流程或获得提示，不代表必须回复。当前消息发送者仍然是读空气判断的主要对象',
                     promptDataKey: 'decision-ai',
                     sharedConfig: {
                         title: '判断型AI共用配置',
@@ -543,7 +543,8 @@ const FlowData = {
                         fieldNote: '此项为三处判断型AI共用配置：读空气AI、主动对话判断AI、频率判断AI。修改后会同步影响全部。',
                         keys: ['judgment_reasoning_start_marker', 'judgment_reasoning_end_marker']
                     },
-                    keys: ['decision_ai_provider_id', 'decision_ai_include_persona',
+                    keys: ['enable_decision_ai', 'decision_ai_provider_id',
+                           'decision_ai_include_persona',
                            'decision_ai_persona_name', 'decision_ai_prompt_mode',
                            'decision_ai_extra_prompt', 'decision_ai_timeout',
                            'enable_decision_ai_reasoning', 'decision_ai_reasoning_log',
