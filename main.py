@@ -1099,6 +1099,9 @@ class ChatPlus(Star):
             self.probability_duration = 120
 
         # === 决策AI配置 ===
+        # 🆕 读空气AI总开关：关闭后完全跳过 AI 判断（不发起任何 LLM 请求，
+        # 概率门通过即回复），用于「只想按概率回复、不想让AI评审」的场景。
+        self.enable_decision_ai = config.get("enable_decision_ai", True)
         self.decision_ai_provider_id = config.get(
             "decision_ai_provider_id", ""
         )  # 读空气AI提供商ID
@@ -3018,6 +3021,9 @@ class ChatPlus(Star):
             f"🔘 群聊功能总开关: {'✓ 已启用' if self.enable_group_chat else '✗ 已禁用'}"
         )
         logger.info(f"初始读空气概率: {self.initial_probability}")
+        logger.info(
+            f"🧠 读空气AI判断: {'开启' if self.enable_decision_ai else '已停用(直接按概率回复)'}"
+        )
         logger.info(f"回复后概率: {self.after_reply_probability}")
         logger.info(f"概率提升持续时间: {self.probability_duration}秒")
         logger.info(f"启用的群组: {self.enabled_groups} (留空=全部)")
@@ -6624,39 +6630,46 @@ class ChatPlus(Star):
                 except Exception as e:
                     logger.warning(f"[回复密度] 获取AI提示失败: {e}")
 
-            should_reply = await DecisionAI.should_reply(
-                self.context,
-                event,
-                decision_formatted_context,
-                self.decision_ai_provider_id,
-                self.decision_ai_extra_prompt,
-                self.decision_ai_timeout,
-                self.decision_ai_prompt_mode,
-                image_urls=image_urls,
-                is_proactive_reply=is_proactive_reply,
-                config=self.config,
-                include_sender_info=self.include_sender_info,
-                # 🆕 v1.2.0: 新增参数
-                is_keyword_triggered=is_keyword_triggered,
-                matched_keyword=matched_trigger_keyword,
-                interest_keywords=interest_keywords,
-                time_period_info=time_period_info,
-                humanize_mode_enabled=self.humanize_mode_enabled,
-                # 🆕 v1.2.0: 传递原始消息文本用于关键词检测
-                original_message_text=original_message_text,
-                # 🆕 v1.2.0: 传递对话疲劳信息
-                conversation_fatigue_info=conversation_fatigue_info,
-                # 🆕 v1.2.1: 传递回复密度提示
-                reply_density_hint=reply_density_hint,
-                pending_cooldown_context=pending_cooldown_context,
-                enable_reasoning=self.enable_decision_ai_reasoning,
-                reasoning_log_enabled=self.decision_ai_reasoning_log,
-                reasoning_log_mode=self.decision_ai_reasoning_log_mode,
-                reasoning_start_marker=self.judgment_reasoning_start_marker,
-                reasoning_end_marker=self.judgment_reasoning_end_marker,
-                include_persona=self.decision_ai_include_persona,
-                configured_persona_name=self.decision_ai_persona_name,
-            )
+            # 🆕 读空气AI总开关：enable_decision_ai=false 时跳过 AI 判断，
+            # 概率门通过即视为应当回复（不发起 LLM 请求，避免持续 401 刷错误日志）。
+            if not self.enable_decision_ai:
+                should_reply = True
+                if self.debug_mode:
+                    logger.info("🧠 [读空气AI] 已停用(enable_decision_ai=false)，跳过AI判断直接按概率放行")
+            else:
+                should_reply = await DecisionAI.should_reply(
+                    self.context,
+                    event,
+                    decision_formatted_context,
+                    self.decision_ai_provider_id,
+                    self.decision_ai_extra_prompt,
+                    self.decision_ai_timeout,
+                    self.decision_ai_prompt_mode,
+                    image_urls=image_urls,
+                    is_proactive_reply=is_proactive_reply,
+                    config=self.config,
+                    include_sender_info=self.include_sender_info,
+                    # 🆕 v1.2.0: 新增参数
+                    is_keyword_triggered=is_keyword_triggered,
+                    matched_keyword=matched_trigger_keyword,
+                    interest_keywords=interest_keywords,
+                    time_period_info=time_period_info,
+                    humanize_mode_enabled=self.humanize_mode_enabled,
+                    # 🆕 v1.2.0: 传递原始消息文本用于关键词检测
+                    original_message_text=original_message_text,
+                    # 🆕 v1.2.0: 传递对话疲劳信息
+                    conversation_fatigue_info=conversation_fatigue_info,
+                    # 🆕 v1.2.1: 传递回复密度提示
+                    reply_density_hint=reply_density_hint,
+                    pending_cooldown_context=pending_cooldown_context,
+                    enable_reasoning=self.enable_decision_ai_reasoning,
+                    reasoning_log_enabled=self.decision_ai_reasoning_log,
+                    reasoning_log_mode=self.decision_ai_reasoning_log_mode,
+                    reasoning_start_marker=self.judgment_reasoning_start_marker,
+                    reasoning_end_marker=self.judgment_reasoning_end_marker,
+                    include_persona=self.decision_ai_include_persona,
+                    configured_persona_name=self.decision_ai_persona_name,
+                )
             # 🐛 修复：不要在这里删除缓存！
             # pre_decision 模式下，缓存的上下文（已植入记忆）需要在生成回复时使用
             # 缓存会在 _generate_and_send_reply 中使用 .pop() 时自动删除
